@@ -5,6 +5,8 @@ on:
   push:
     tags: 
       - 'v*'         # 标签推送时触发
+  schedule:
+    - cron: '0 2 * * 1'  # 每周一凌晨2点自动构建
   pull_request:       # PR 时触发
 
 env:
@@ -52,7 +54,7 @@ jobs:
         cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
         wget ${{ env.CONFIG_URL }} -O .config
 
-    - name: Build quickstart package
+    - name: Compile QuickStart Package
       run: |
         cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
         make package/feeds/nas_luci/luci-app-quickstart/compile -j$(nproc)
@@ -88,22 +90,64 @@ jobs:
           immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
         retention-days: 30
 
-    - name: Create Release and Upload Assets
-      if: startsWith(github.ref, 'refs/tags/')
+    - name: Create Automatic Release
+      if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
       uses: softprops/action-gh-release@v1
       with:
+        tag_name: quickstart-build-${{ github.run_id }}-${{ github.run_attempt }}
+        name: "QuickStart Auto Build #${{ github.run_number }}"
+        body: |
+          ## QuickStart Package Auto Build
+          
+          **Build Information:**
+          - Run ID: ${{ github.run_id }}
+          - Run Number: ${{ github.run_number }}
+          - Trigger: ${{ github.event_name }}
+          - Commit: ${{ github.sha }}
+          - Date: ${{ fromJSON(format('["{0}"]', fromJSON('["' (fromJSON('{"date":""}').date) '"]')[0]))[0] }}
+          
+          **Built IPK Files:**
+          ${{ steps.find-ipk.outputs.ipk_files }}
+          
+          This is an automated build of QuickStart packages for ImmortalWrt.
+        draft: false
+        prerelease: true
         files: |
           immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas_luci/*quickstart*
           immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create Tagged Release
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        name: "QuickStart ${{ github.ref_name }}"
+        body: |
+          ## QuickStart Package Release ${{ github.ref_name }}
+          
+          **Build Information:**
+          - Run ID: ${{ github.run_id }}
+          - Run Number: ${{ github.run_number }}
+          - Commit: ${{ github.sha }}
+          - Date: ${{ fromJSON(format('["{0}"]', fromJSON('["' (fromJSON('{"date":""}').date) '"]')[0]))[0] }}
+          
+          **Built IPK Files:**
+          ${{ steps.find-ipk.outputs.ipk_files }}
+          
+          Official release build of QuickStart packages for ImmortalWrt.
         draft: false
         prerelease: false
+        files: |
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas_luci/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Output build summary
       run: |
         echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-        echo "✅ Quickstart package build completed successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "✅ QuickStart package compilation completed successfully!" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Built IPK files:**" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
@@ -111,6 +155,8 @@ jobs:
         echo '```' >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "📦 Artifacts have been uploaded and will be available for 30 days." >> $GITHUB_STEP_SUMMARY
-        if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
-          echo "🚀 Release assets have been published with the tag." >> $GITHUB_STEP_SUMMARY
+        if [ "${{ github.event_name }}" = "push" ] && [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+          echo "🚀 Official release has been published with tag ${{ github.ref_name }}." >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+          echo "🚀 Automatic pre-release has been published with unique tag." >> $GITHUB_STEP_SUMMARY
         fi
