@@ -81,6 +81,10 @@ jobs:
         # 设置输出变量
         echo "ipk_files=$ALL_FILES" >> $GITHUB_OUTPUT
 
+    - name: Get current date
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+
     - name: Upload IPK files as artifact
       uses: actions/upload-artifact@v4
       with:
@@ -104,7 +108,7 @@ jobs:
           - Run Number: ${{ github.run_number }}
           - Trigger: ${{ github.event_name }}
           - Commit: ${{ github.sha }}
-          - Date: ${{ fromJSON(format('["{0}"]', fromJSON('["' (fromJSON('{"date":""}').date) '"]')[0]))[0] }}
+          - Date: ${{ steps.date.outputs.date }}
           
           **Built IPK Files:**
           ${{ steps.find-ipk.outputs.ipk_files }}
@@ -130,7 +134,7 @@ jobs:
           - Run ID: ${{ github.run_id }}
           - Run Number: ${{ github.run_number }}
           - Commit: ${{ github.sha }}
-          - Date: ${{ fromJSON(format('["{0}"]', fromJSON('["' (fromJSON('{"date":""}').date) '"]')[0]))[0] }}
+          - Date: ${{ steps.date.outputs.date }}
           
           **Built IPK Files:**
           ${{ steps.find-ipk.outputs.ipk_files }}
@@ -148,6 +152,8 @@ jobs:
       run: |
         echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
         echo "✅ QuickStart package compilation completed successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Build Date:** ${{ steps.date.outputs.date }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Built IPK files:**" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
