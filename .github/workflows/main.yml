@@ -103,7 +103,7 @@ jobs:
         name: compiled-ipk-packages
         path: |
           immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*quickstart*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*istore*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*store*    # 已修改
           immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*taskd*
           immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*xterm*
         retention-days: 30
@@ -142,37 +142,6 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Create Tagged Release
-      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        name: "Release ${{ github.ref_name }}"
-        body: |
-          ## ImmortalWrt Packages Release ${{ github.ref_name }}
-          
-          **Build Information:**
-          - Run ID: ${{ github.run_id }}
-          - Run Number: ${{ github.run_number }}
-          - Commit: ${{ github.sha }}
-          - Date: ${{ steps.date.outputs.date }}
-          - Files Count: ${{ steps.find-ipk.outputs.file_count }}
-          
-          **Built Packages:**
-          - QuickStart packages
-          - iStore packages (luci-app-store, luci-lib-taskd, luci-lib-xterm)
-          
-          **Download:** All IPK files are attached below.
-          
-          Official release build of packages for ImmortalWrt.
-        draft: false
-        prerelease: false
-        files: |
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*quickstart*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*istore*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*taskd*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*xterm*
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Output build summary
       run: |
