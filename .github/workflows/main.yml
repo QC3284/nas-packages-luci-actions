@@ -1,4 +1,4 @@
-name: Build ImmortalWrt Quickstart Package
+name: Build ImmortalWrt Packages
 
 on:
   workflow_dispatch:  # 手动触发
@@ -37,38 +37,51 @@ jobs:
       run: |
         tar -I zstd -xvf sdk.tar.zst
 
-    - name: Setup environment
+    - name: Setup environment and feeds
       run: |
         cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
         
-        # Add NAS feeds
+        # 添加所有软件源
         echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
         echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+        echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
         
-        # Update and install feeds
+        # 更新并安装所有feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -a
+        # 特别安装iStore商店及其依赖
+        ./scripts/feeds install -d y -p istore luci-app-store
 
     - name: Download config
       run: |
         cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
         wget ${{ env.CONFIG_URL }} -O .config
 
-    - name: Compile QuickStart Package
+    - name: Compile All Packages
       run: |
         cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        # 编译 quickstart 包
         make package/feeds/nas_luci/luci-app-quickstart/compile -j$(nproc)
+        # 编译 iStore 相关包
+        make package/feeds/istore/luci-app-store/compile -j$(nproc)
+        make package/feeds/istore/luci-lib-taskd/compile -j$(nproc)
+        make package/feeds/istore/luci-lib-xterm/compile -j$(nproc)
+
+    - name: Get current date
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
     - name: Find and list IPK files
       id: find-ipk
       run: |
         cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
         
-        # 查找包含 quickstart 的 IPK 文件
-        NAS_LUCI_FILES=$(find bin/packages/aarch64_cortex-a53/nas_luci/ -name "*quickstart*" -type f 2>/dev/null | tr '\n' ' ' || echo "")
-        NAS_FILES=$(find bin/packages/aarch64_cortex-a53/nas/ -name "*quickstart*" -type f 2>/dev/null | tr '\n' ' ' || echo "")
+        # 查找所有相关IPK文件
+        QUICKSTART_FILES=$(find bin/packages/aarch64_cortex-a53/ -name "*quickstart*" -type f 2>/dev/null | tr '\n' ' ' || echo "")
+        ISTORE_FILES=$(find bin/packages/aarch64_cortex-a53/ -name "*istore*" -type f 2>/dev/null | tr '\n' ' ' || echo "")
+        STORE_DEPS_FILES=$(find bin/packages/aarch64_cortex-a53/ \( -name "*taskd*" -o -name "*xterm*" \) -type f 2>/dev/null | tr '\n' ' ' || echo "")
         
-        ALL_FILES="$NAS_LUCI_FILES $NAS_FILES"
+        ALL_FILES="$QUICKSTART_FILES $ISTORE_FILES $STORE_DEPS_FILES"
         
         echo "Found IPK files:"
         for file in $ALL_FILES; do
@@ -78,30 +91,31 @@ jobs:
           fi
         done
         
-        # 设置输出变量
+        # 统计文件数量
+        FILE_COUNT=$(echo "$ALL_FILES" | wc -w)
+        echo "Total files found: $FILE_COUNT"
+        echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
         echo "ipk_files=$ALL_FILES" >> $GITHUB_OUTPUT
-
-    - name: Get current date
-      id: date
-      run: echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
     - name: Upload IPK files as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: quickstart-ipk-packages
+        name: compiled-ipk-packages
         path: |
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas_luci/*quickstart*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*istore*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*taskd*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*xterm*
         retention-days: 30
 
     - name: Create Automatic Release
       if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: quickstart-build-${{ github.run_id }}-${{ github.run_attempt }}
-        name: "QuickStart Auto Build #${{ github.run_number }}"
+        tag_name: auto-build-${{ github.run_id }}-${{ github.run_attempt }}
+        name: "Auto Build #${{ github.run_number }}"
         body: |
-          ## QuickStart Package Auto Build
+          ## ImmortalWrt Packages Auto Build
           
           **Build Information:**
           - Run ID: ${{ github.run_id }}
@@ -109,16 +123,22 @@ jobs:
           - Trigger: ${{ github.event_name }}
           - Commit: ${{ github.sha }}
           - Date: ${{ steps.date.outputs.date }}
+          - Files Count: ${{ steps.find-ipk.outputs.file_count }}
           
-          **Built IPK Files:**
-          ${{ steps.find-ipk.outputs.ipk_files }}
+          **Built Packages:**
+          - QuickStart packages
+          - iStore packages (luci-app-store, luci-lib-taskd, luci-lib-xterm)
           
-          This is an automated build of QuickStart packages for ImmortalWrt.
+          **Download:** All IPK files are attached below.
+          
+          This is an automated build of packages for ImmortalWrt.
         draft: false
         prerelease: true
         files: |
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas_luci/*quickstart*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*istore*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*taskd*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*xterm*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -126,39 +146,46 @@ jobs:
       if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        name: "QuickStart ${{ github.ref_name }}"
+        name: "Release ${{ github.ref_name }}"
         body: |
-          ## QuickStart Package Release ${{ github.ref_name }}
+          ## ImmortalWrt Packages Release ${{ github.ref_name }}
           
           **Build Information:**
           - Run ID: ${{ github.run_id }}
           - Run Number: ${{ github.run_number }}
           - Commit: ${{ github.sha }}
           - Date: ${{ steps.date.outputs.date }}
+          - Files Count: ${{ steps.find-ipk.outputs.file_count }}
           
-          **Built IPK Files:**
-          ${{ steps.find-ipk.outputs.ipk_files }}
+          **Built Packages:**
+          - QuickStart packages
+          - iStore packages (luci-app-store, luci-lib-taskd, luci-lib-xterm)
           
-          Official release build of QuickStart packages for ImmortalWrt.
+          **Download:** All IPK files are attached below.
+          
+          Official release build of packages for ImmortalWrt.
         draft: false
         prerelease: false
         files: |
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas_luci/*quickstart*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*istore*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*taskd*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*xterm*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Output build summary
       run: |
         echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-        echo "✅ QuickStart package compilation completed successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Package compilation completed successfully!" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Build Date:** ${{ steps.date.outputs.date }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Total Files:** ${{ steps.find-ipk.outputs.file_count }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Built IPK files:**" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        echo "${{ steps.find-ipk.outputs.ipk_files }}" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "**Built Packages:**" >> $GITHUB_STEP_SUMMARY
+        echo "- QuickStart (luci-app-quickstart)" >> $GITHUB_STEP_SUMMARY
+        echo "- iStore (luci-app-store)" >> $GITHUB_STEP_SUMMARY
+        echo "- iStore Dependencies (luci-lib-taskd, luci-lib-xterm)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "📦 Artifacts have been uploaded and will be available for 30 days." >> $GITHUB_STEP_SUMMARY
         if [ "${{ github.event_name }}" = "push" ] && [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
