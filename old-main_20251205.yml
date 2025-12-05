@@ -1,0 +1,168 @@
+name: Build ImmortalWrt Quickstart Package
+
+on:
+  workflow_dispatch:  # 手动触发
+  push:
+    tags: 
+      - 'v*'         # 标签推送时触发
+  schedule:
+    - cron: '0 2 * * 1'  # 每周一凌晨2点自动构建
+  pull_request:       # PR 时触发
+
+env:
+  SDK_URL: "https://downloads.immortalwrt.org/releases/24.10.4/targets/mediatek/filogic/immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+  CONFIG_URL: "https://raw.githubusercontent.com/QC3284/nas-packages-luci-actions/main/test.config.txt"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+          gettext git libncurses5-dev libssl-dev python3-setuptools rsync \
+          swig unzip zlib1g-dev file wget axel zstd p7zip-full
+
+    - name: Download ImmortalWrt SDK
+      run: |
+        axel -n 8 -o sdk.tar.zst ${{ env.SDK_URL }}
+
+    - name: Extract SDK
+      run: |
+        tar -I zstd -xvf sdk.tar.zst
+
+    - name: Setup environment
+      run: |
+        cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        
+        # Add NAS feeds
+        echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
+        echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+        
+        # Update and install feeds
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Download config
+      run: |
+        cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        wget ${{ env.CONFIG_URL }} -O .config
+
+    - name: Compile QuickStart Package
+      run: |
+        cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        make package/feeds/nas_luci/luci-app-quickstart/compile -j$(nproc)
+
+    - name: Find and list IPK files
+      id: find-ipk
+      run: |
+        cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        
+        # 查找包含 quickstart 的 IPK 文件
+        NAS_LUCI_FILES=$(find bin/packages/aarch64_cortex-a53/nas_luci/ -name "*quickstart*" -type f 2>/dev/null | tr '\n' ' ' || echo "")
+        NAS_FILES=$(find bin/packages/aarch64_cortex-a53/nas/ -name "*quickstart*" -type f 2>/dev/null | tr '\n' ' ' || echo "")
+        
+        ALL_FILES="$NAS_LUCI_FILES $NAS_FILES"
+        
+        echo "Found IPK files:"
+        for file in $ALL_FILES; do
+          if [ -f "$file" ]; then
+            echo "  - $file"
+            ls -la "$file"
+          fi
+        done
+        
+        # 设置输出变量
+        echo "ipk_files=$ALL_FILES" >> $GITHUB_OUTPUT
+
+    - name: Get current date
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+
+    - name: Upload IPK files as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: quickstart-ipk-packages
+        path: |
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas_luci/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
+        retention-days: 30
+
+    - name: Create Automatic Release
+      if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: quickstart-build-${{ github.run_id }}-${{ github.run_attempt }}
+        name: "QuickStart Auto Build #${{ github.run_number }}"
+        body: |
+          ## QuickStart Package Auto Build
+          
+          **Build Information:**
+          - Run ID: ${{ github.run_id }}
+          - Run Number: ${{ github.run_number }}
+          - Trigger: ${{ github.event_name }}
+          - Commit: ${{ github.sha }}
+          - Date: ${{ steps.date.outputs.date }}
+          
+          **Built IPK Files:**
+          ${{ steps.find-ipk.outputs.ipk_files }}
+          
+          This is an automated build of QuickStart packages for ImmortalWrt.
+        draft: false
+        prerelease: true
+        files: |
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas_luci/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create Tagged Release
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        name: "QuickStart ${{ github.ref_name }}"
+        body: |
+          ## QuickStart Package Release ${{ github.ref_name }}
+          
+          **Build Information:**
+          - Run ID: ${{ github.run_id }}
+          - Run Number: ${{ github.run_number }}
+          - Commit: ${{ github.sha }}
+          - Date: ${{ steps.date.outputs.date }}
+          
+          **Built IPK Files:**
+          ${{ steps.find-ipk.outputs.ipk_files }}
+          
+          Official release build of QuickStart packages for ImmortalWrt.
+        draft: false
+        prerelease: false
+        files: |
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas_luci/*quickstart*
+          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/nas/*quickstart*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Output build summary
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "✅ QuickStart package compilation completed successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Build Date:** ${{ steps.date.outputs.date }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Built IPK files:**" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.find-ipk.outputs.ipk_files }}" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📦 Artifacts have been uploaded and will be available for 30 days." >> $GITHUB_STEP_SUMMARY
+        if [ "${{ github.event_name }}" = "push" ] && [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+          echo "🚀 Official release has been published with tag ${{ github.ref_name }}." >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+          echo "🚀 Automatic pre-release has been published with unique tag." >> $GITHUB_STEP_SUMMARY
+        fi
