@@ -110,7 +110,7 @@ jobs:
 
     - name: Create Automatic Release
       if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: auto-build-${{ github.run_id }}-${{ github.run_attempt }}
         name: "Auto Build #${{ github.run_number }}"
