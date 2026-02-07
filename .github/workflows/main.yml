@@ -12,6 +12,7 @@ on:
 env:
   SDK_URL: "https://downloads.immortalwrt.org/releases/24.10.4/targets/mediatek/filogic/immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
   CONFIG_URL: "https://raw.githubusercontent.com/QC3284/nas-packages-luci-actions/main/test.config.txt"
+  SDK_DIR: "immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64"
 
 jobs:
   build:
@@ -39,7 +40,7 @@ jobs:
 
     - name: Setup environment and feeds
       run: |
-        cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        cd ${{ env.SDK_DIR }}
         
         # 添加所有软件源
         echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
@@ -49,17 +50,17 @@ jobs:
         # 更新并安装所有feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-        # 特别安装iStore商店及其依赖
-        ./scripts/feeds install -d y -p istore luci-app-store
 
     - name: Download config
       run: |
-        cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        cd ${{ env.SDK_DIR }}
         wget ${{ env.CONFIG_URL }} -O .config
 
     - name: Compile All Packages
       run: |
-        cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        cd ${{ env.SDK_DIR }}
+        # 编译所有选中的包
+        make defconfig
         # 编译 quickstart 包
         make package/feeds/nas_luci/luci-app-quickstart/compile -j$(nproc)
         # 编译 iStore 相关包
@@ -74,38 +75,35 @@ jobs:
     - name: Find and list IPK files
       id: find-ipk
       run: |
-        cd immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64
+        cd ${{ env.SDK_DIR }}
         
         # 查找所有相关IPK文件
-        QUICKSTART_FILES=$(find bin/packages/aarch64_cortex-a53/ -name "*quickstart*" -type f 2>/dev/null | tr '\n' ' ' || echo "")
-        ISTORE_FILES=$(find bin/packages/aarch64_cortex-a53/ -name "*istore*" -type f 2>/dev/null | tr '\n' ' ' || echo "")
-        STORE_DEPS_FILES=$(find bin/packages/aarch64_cortex-a53/ \( -name "*taskd*" -o -name "*xterm*" \) -type f 2>/dev/null | tr '\n' ' ' || echo "")
-        
-        ALL_FILES="$QUICKSTART_FILES $ISTORE_FILES $STORE_DEPS_FILES"
+        IPK_FILES=$(find bin/packages/aarch64_cortex-a53/ \( -name "*quickstart*" -o -name "*store*" -o -name "*taskd*" -o -name "*xterm*" \) -type f 2>/dev/null | tr '\n' ' ' || echo "")
         
         echo "Found IPK files:"
-        for file in $ALL_FILES; do
+        for file in $IPK_FILES; do
           if [ -f "$file" ]; then
-            echo "  - $file"
+            echo "  - $(basename "$file")"
             ls -la "$file"
           fi
         done
         
         # 统计文件数量
-        FILE_COUNT=$(echo "$ALL_FILES" | wc -w)
+        FILE_COUNT=$(echo "$IPK_FILES" | wc -w)
         echo "Total files found: $FILE_COUNT"
         echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
-        echo "ipk_files=$ALL_FILES" >> $GITHUB_OUTPUT
+        echo "ipk_files=$IPK_FILES" >> $GITHUB_OUTPUT
 
     - name: Upload IPK files as artifact
+      if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: compiled-ipk-packages
+        name: compiled-ipk-packages-${{ github.run_id }}
         path: |
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*quickstart*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*store*    # 已修改
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*taskd*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*xterm*
+          ${{ env.SDK_DIR }}/bin/packages/aarch64_cortex-a53/**/*quickstart*
+          ${{ env.SDK_DIR }}/bin/packages/aarch64_cortex-a53/**/*store*
+          ${{ env.SDK_DIR }}/bin/packages/aarch64_cortex-a53/**/*taskd*
+          ${{ env.SDK_DIR }}/bin/packages/aarch64_cortex-a53/**/*xterm*
         retention-days: 30
 
     - name: Create Automatic Release
@@ -113,7 +111,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: auto-build-${{ github.run_id }}-${{ github.run_attempt }}
-        name: "Auto Build #${{ github.run_number }}"
+        name: "Auto Build #${{ github.run_number }} (${{ github.ref_name }})"
         body: |
           ## ImmortalWrt Packages Auto Build
           
@@ -133,15 +131,14 @@ jobs:
           
           This is an automated build of packages for ImmortalWrt.
         draft: false
-        prerelease: true
+        prerelease: false
         files: |
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*quickstart*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*istore*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*taskd*
-          immortalwrt-sdk-24.10.4-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64/bin/packages/aarch64_cortex-a53/**/*xterm*
+          ${{ env.SDK_DIR }}/bin/packages/aarch64_cortex-a53/**/*quickstart*
+          ${{ env.SDK_DIR }}/bin/packages/aarch64_cortex-a53/**/*store*
+          ${{ env.SDK_DIR }}/bin/packages/aarch64_cortex-a53/**/*taskd*
+          ${{ env.SDK_DIR }}/bin/packages/aarch64_cortex-a53/**/*xterm*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 
     - name: Output build summary
       run: |
